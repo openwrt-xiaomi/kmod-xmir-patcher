@@ -1,0 +1,3 @@
+config XMIR_PATCHER
+	tristate "Module for hack xq kernel"
+	default m
