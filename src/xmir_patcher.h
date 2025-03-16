@@ -31,7 +31,14 @@ extern unsigned long arm_copy_to_user(void __user * to, const void * from, unsig
 
 #elif defined ( CONFIG_MIPS )
 
-//#error "Arch MIPS currently not supported!"
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 13, 0)
+extern size_t __raw_copy_from_user(void *__to, const void *__from, size_t __n);
+extern size_t __raw_copy_to_user(void *__to, const void *__from, size_t __n);
+#else
+extern size_t __copy_user(void *__to, const void *__from, size_t __n);
+#define __raw_copy_from_user  __copy_user
+#define __raw_copy_to_user    __copy_user
+#endif
 
 #else
 #error "Arch not supported."
@@ -41,28 +48,59 @@ static size_t x_copy_from_user(void * to, const void __user * from, size_t n)
 {
 #if defined ( CONFIG_ARM64 )
     n = __copy_from_user(to, from, n);
+    return n;
 #elif defined ( CONFIG_ARM )
     //unsigned int __ua_flags = uaccess_save_and_enable();
     n = arm_copy_from_user(to, from, n);
     //uaccess_restore(__ua_flags);
+    return n;
 #else // MIPS
     // option CONFIG_EVA not supported !!!
-    n = copy_from_user(to, from, n);
+    register void * __cu_to_r __asm__("$4");
+    register const void __user * __cu_from_r __asm__("$5");
+    register long __cu_len_r __asm__("$6");
+    __cu_to_r = to;
+    __cu_from_r = from;
+    __cu_len_r = n;
+    __asm__ __volatile__(
+        ".set\tnoreorder\n\t"
+        __MODULE_JAL(__raw_copy_from_user)
+        ".set\tnoat\n\t"
+        __UA_ADDU "\t$1, %1, %2\n\t"
+        ".set\tat\n\t"
+        ".set\treorder"
+        : "+r" (__cu_to_r), "+r" (__cu_from_r), "+r" (__cu_len_r)
+        :
+        : "$8", "$9", "$10", "$11", "$12", "$14", "$15", "$24", "$31",
+          DADDI_SCRATCH, "memory");
+    return __cu_len_r;
 #endif
-    return n;
 }
 
 static size_t x_copy_to_user(void __user * to, const void * from, size_t n)
 {
 #if defined ( CONFIG_ARM64 )
     n = __copy_from_user(to, from, n);
+    return n;
 #elif defined ( CONFIG_ARM )
     n = arm_copy_to_user(to, from, n);
+    return n;
 #else // MIPS
     // option CONFIG_EVA not supported !!!
-    n = copy_to_user(to, from, n);
+    register void __user * __cu_to_r __asm__("$4");
+    register const void * __cu_from_r __asm__("$5");
+    register long __cu_len_r __asm__("$6");
+    __cu_to_r = (to);
+    __cu_from_r = (from);
+    __cu_len_r = (n);
+    __asm__ __volatile__(
+        __MODULE_JAL(__raw_copy_to_user)
+        : "+r" (__cu_to_r), "+r" (__cu_from_r), "+r" (__cu_len_r)
+        :
+        : "$8", "$9", "$10", "$11", "$12", "$14", "$15", "$24", "$31",
+          DADDI_SCRATCH, "memory");
+    return __cu_len_r;
 #endif
-    return n;
 }
 
 extern struct mutex mtd_table_mutex;
