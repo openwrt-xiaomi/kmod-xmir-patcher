@@ -233,8 +233,8 @@ static int dev_process_command(const char * cmd)
         pr_err("ERROR: Command '%s' not supported!", g.cmd);
         rc = -2;
     }
-    if (rc == 0) {
-        pr_info("CMD: RESULT: %s", g.resp);
+    if (g.resp[0]) {
+        pr_info("CMD: RESULT: %d|%s", rc, g.resp);
     }
     return rc;
 }
@@ -247,11 +247,12 @@ static ssize_t dev_write(struct file * fileptr, const char * buffer, size_t len,
     int rc;
     int err_code;
     
+    pr_info("recv: buffer = %px, len = %zu, offset = %d", buffer, len, offset ? (int)*offset : -1);
     update_resp(INT_MIN, NULL);
     g.cmd[0] = 0;
     g.cmd_arg_num = 0;
 
-    if (*offset != 0) {
+    if (offset && *offset != 0) {
         pr_err("recv: Invalid arg offset = %d (len = %zu)", (int)*offset, len);
         return -EINVAL;
     }
@@ -280,7 +281,9 @@ static ssize_t dev_write(struct file * fileptr, const char * buffer, size_t len,
         pr_err("recv: Response too large (len = %zu)", strlen(g.resp));
     }
     pr_info("recv: resp code = %d (len = %zu)", g.resp_code, strlen(g.resp));
-    *offset = len;
+    if (offset) {
+        *offset = len;
+    }
     return len;
 }
 
