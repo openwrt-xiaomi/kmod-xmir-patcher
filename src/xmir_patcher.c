@@ -54,7 +54,7 @@ typedef struct mod_data {
     struct file_operations fops;
     char   dummy1[128];
     
-    int    mtd_dev[MAX_MTD_IDX + 1];
+    int    mtd_dev_numbers;
     int    mtd_max_index;
     size_t mtd_index_offset;
     size_t mtd_name_offset;
@@ -67,7 +67,7 @@ typedef struct mod_data {
     size_t page_offset;      // lower virt addr
     size_t high_memory;      // higher virt addr
 #endif
-};
+} t_mod_data;
 
 typedef struct _mod_data {
     struct mod_data  data;
@@ -107,73 +107,82 @@ static int update_resp(int code, const char * resp)
     return 0;
 }
 
-static int _get_mtd_info(struct mtd_info * mtd, int mtd_idx);
-
 static int get_mtd_info(int anum, char * arg[])
 {
-    unsigned long mtd_idx; 
+    const char * mtd_name = NULL;
+    int mtd_idx = -1;
     struct mtd_info * mtd;
-    int rc;
     
     if (anum != 1 || strlen(arg[0]) == 0) {
         return -3;
     }
-    if (kstrtoul(arg[0], 0, &mtd_idx)) {
-        return -4;
+    if (strlen(arg[0]) <= 2) {
+        unsigned long value;
+        if (kstrtoul(arg[0], 10, &value) == 0) {
+            mtd_idx = (int)value; 
+        }
     }
-    mtd = get_mtd_info_dev((int)mtd_idx, true, true);
-    if (IS_ERR(mtd)) {
-        return PTR_ERR(mtd);
+    if (mtd_idx < 0) {
+        mtd_name = arg[0];
     }
-    rc = _get_mtd_info(mtd, mtd_idx);
-    unlock_mtd_table();
-    return rc;
-}
-
-static int _get_mtd_info(struct mtd_info * mtd, int mtd_idx)
-{
-    uint64_t mtd_addr;
-    uint64_t mtd_size;
-    int mtd_lock;
-    const char * name = get_mtd_name(mtd);
-    if (!name) {
-        pr_err("ERROR: cannot found name for MTD[%d]", mtd_idx);
-        return -21;
+    mtd = get_mtd_info_dev(mtd_name, mtd_idx, true, true);
+    if (!IS_ERR_OR_NULL(mtd)) {
+        const char * name;
+        uint64_t addr;
+        uint64_t size;
+        int flags = mtd->flags;
+        int lock;
+        mtd_idx = get_mtd_index(mtd);
+        name = get_mtd_name(mtd);
+        if (!name) {
+            pr_err("ERROR: cannot found name for MTD[%d]", mtd_idx);
+            unlock_mtd_table();
+            return -22;
+        }
+        addr = mtdpart_get_offset(mtd);
+        size = mtd_get_device_size(mtd);
+        lock = mtd_is_locked(mtd, 0, size); 
+        snprintf(g.resp, MAX_RESP_LEN, "%d|%s|0x%llx|0x%llx|0x%x|%d\n", mtd_idx, name, addr, size, flags, lock);
+        unlock_mtd_table();
+        return 0;
     }
-    mtd_addr = mtdpart_get_offset(mtd);
-    mtd_size = mtd_get_device_size(mtd);
-    mtd_lock = mtd_is_locked(mtd, 0, mtd_size); 
-    snprintf(g.resp, MAX_RESP_LEN, "%d|%s|0x%llx|0x%llx|0x%x|%d\n", mtd_idx, name, mtd_addr, mtd_size, mtd->flags, mtd_lock);
-    return 0;
+    return (!mtd) ? -21 : PTR_ERR(mtd);
 }
 
 static int set_mtd_rw(int anum, char * arg[])
 {
-    unsigned long mtd_idx; 
+    const char * mtd_name = NULL;
+    int mtd_idx = -1;
     struct mtd_info * mtd;
-    int rc;
     
     if (anum != 1 || strlen(arg[0]) == 0) {
         return -3;
     }
-    if (kstrtoul(arg[0], 0, &mtd_idx)) {
-        return -4;
+    if (strlen(arg[0]) <= 2) {
+        unsigned long value;
+        if (kstrtoul(arg[0], 10, &value) == 0) {
+            mtd_idx = (int)value; 
+        }
     }
-    mtd = get_mtd_info_dev((int)mtd_idx, true, true);
-    if (IS_ERR(mtd)) {
-        return PTR_ERR(mtd);
+    if (mtd_idx < 0) {
+        mtd_name = arg[0];
     }
-    unlock_mtd_table();
-    mtd = get_mtd_device(NULL, (int)mtd_idx);
-    if (IS_ERR_OR_NULL(mtd)) {
-        pr_err("ERROR: Cannot get mtd[%d] device (err = %ld)", (int)mtd_idx, PTR_ERR(mtd));
-        return -31;
+    mtd = get_mtd_info_dev(mtd_name, mtd_idx, true, true);
+    if (!IS_ERR_OR_NULL(mtd)) {
+        mtd_idx = get_mtd_index(mtd);
+        unlock_mtd_table();
+        mtd = get_mtd_device(NULL, mtd_idx);
+        if (IS_ERR_OR_NULL(mtd)) {
+            pr_err("ERROR: Cannot get mtd[%d] device (err = %ld)", mtd_idx, PTR_ERR(mtd));
+            return -32;
+        }
+        mtd->flags |= MTD_WRITEABLE;
+        snprintf(g.resp, MAX_RESP_LEN, "%d|0x%x\n", mtd_idx, mtd->flags);
+        put_mtd_device(mtd);
+        pr_info("CMD: set RW flag for MTD[%d] device", mtd_idx);
+        return 0;
     }
-    mtd->flags |= MTD_WRITEABLE;
-    snprintf(g.resp, MAX_RESP_LEN, "0x%x\n", mtd->flags);
-    put_mtd_device(mtd);
-    pr_info("CMD: set RW flag for MTD[%d] device", (int)mtd_idx);
-    return 0;
+    return (!mtd) ? -31 : PTR_ERR(mtd);
 }
 
 static int dev_process_command(const char * cmd)
@@ -323,14 +332,8 @@ static ssize_t dev_read(struct file * fileptr, char * buffer, size_t len, loff_t
         *offset += resp_len;
     }
     pr_info("send: sent %d characters to the user: \"%s\"", (int)*offset, g.resp);
-    fileptr->private_data = (void *)*offset;  // resp readed
+    fileptr->private_data = (void *)(size_t)*offset;  // resp readed
     return *offset;
-}
-
-static loff_t dev_seek(struct file * fileptr, loff_t offset, int whence)
-{
-    pr_info("seek: offset: 0x%llx, whence: %d", offset, whence);
-    return offset;
 }
 
 static int dev_open(struct inode * inodep, struct file * fileptr)
@@ -374,7 +377,7 @@ static int __init mod_init(void)
         pr_err("init: unsupported module name: '%s'", THIS_MODULE->name);
         return -EFAULT;
     }
-    mdata = kzalloc(sizeof(struct mod_data), GFP_KERNEL);
+    mdata = x_kzalloc(sizeof(struct mod_data), GFP_KERNEL);
     if (!mdata) {
         pr_err("init: cannot allocate %zu bytes for data", sizeof(struct mod_data));
         return -ENOMEM;
@@ -382,8 +385,8 @@ static int __init mod_init(void)
     gptr = (struct mod_data **)(THIS_MODULE->name + 32);
     *gptr = (struct mod_data *)mdata;
 
-    g.mod_cdev = kzalloc(sizeof(struct cdev) + 128, GFP_KERNEL);
-    g.dev_mutex = kzalloc(sizeof(struct mutex) + 64, GFP_KERNEL);
+    g.mod_cdev = x_kzalloc(sizeof(struct cdev) + 128, GFP_KERNEL);
+    g.dev_mutex = x_kzalloc(sizeof(struct mutex) + 64, GFP_KERNEL);
     if (!g.mod_cdev || !g.dev_mutex) {
         pr_err("init: cannot allocate kernel objects");
         err = -ENOMEM;

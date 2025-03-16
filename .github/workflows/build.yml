@@ -1,0 +1,255 @@
+name: build
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_build:
+        description: 'Test build'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+        - true
+        - false
+      fake_build:
+        description: 'Fake build'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+        - true
+        - false
+      suffix:
+        description: 'TAG suffix'
+        required: false
+        default: ''
+        type: string
+
+env:
+  TEST_BUILD: ${{ github.event.inputs.test_build == 'true' }}
+  FAKE_BUILD: ${{ github.event.inputs.fake_build == 'true' }}
+  TAG_SUFFIX: ${{ github.event.inputs.suffix }}
+  REPO_URL: https://github.com/openwrt-xiaomi/kmod-xmir-patcher
+  REPO_LNK: openwrt-xiaomi/kmod-xmir-patcher
+  REPO_BRANCH: master
+  TAG_PREFIX: v
+  BUILD_ROOT: ${{ github.workspace }}/linux
+  DEPENDENCIES: ${{ github.workspace }}/dependencies-ubuntu.txt
+  TC_DIR: ${{ github.workspace }}/tc
+  TC_LNK: https://toolchains.bootlin.com/downloads/releases/toolchains
+  TZ: UTC
+  BUILD_DATE: unknown
+  REPO_DATE: unknown
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.gh.outputs.tag }}
+      date: ${{ steps.gh.outputs.date }}
+      sha: ${{ steps.gh.outputs.sha }}
+      url: ${{ steps.gh.outputs.url }}
+      message: ${{ steps.gh.outputs.message }}
+      build_date: ${{ steps.gh.outputs.build_date }}
+      build_time: ${{ steps.gh.outputs.build_time }}
+      fw_date: ${{ steps.gh.outputs.fw_date }}
+      test_build: ${{ env.TEST_BUILD }}
+      fake_build: ${{ env.FAKE_BUILD }}
+    steps:
+      - name: Get repo data via GH API
+        id: gh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Tag name from GITHUB_REF_NAME: $GITHUB_REF_NAME"
+          echo "Tag name from github.ref_name: ${{ github.ref_name }}"
+          BRANCH=$(gh api repos/$REPO_LNK --jq '.default_branch')
+          REPO_DATE=$(gh api repos/$REPO_LNK/commits/$BRANCH --jq '.commit.committer.date')
+          BUILD_DATE=$( date --utc +'%Y%m%d' )
+          BUILD_TIME=$( date --utc +'%H%M' )
+          FW_DATE=$( date --utc +'%Y-%m-%d' )
+          TAG=$TAG_PREFIX$BUILD_DATE-$BUILD_TIME
+          echo "TAG=$TAG" >> $GITHUB_ENV 
+          echo "REPO_DATE=$REPO_DATE" >> $GITHUB_ENV
+          {
+            echo "tag=$TAG"
+            echo "date=$(date --utc -d $REPO_DATE +%Y%m%d)"
+            echo "sha=$(gh api repos/$REPO_LNK/commits/$BRANCH --jq '.sha[0:7]')"
+            echo "url=$(gh api repos/$REPO_LNK/commits/$BRANCH --jq '.html_url')"
+            echo "message<<EOF"
+            gh api repos/$REPO_LNK/commits/$BRANCH --jq '.commit.message'
+            echo EOF
+            echo "build_date=$BUILD_DATE"
+            echo "build_time=$BUILD_TIME"
+            echo "fw_date=$FW_DATE"
+          } >> $GITHUB_OUTPUT
+  
+  build:
+    needs: check
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [ armv7, arm64, mips ]
+        kver:
+          - 4.4
+          - 5.4
+        isTestOrFake:
+          - ${{ needs.check.outputs.test_build == 'true' || needs.check.outputs.fake_build == 'true' }}
+        exclude:
+          - { isTestOrFake: true }
+        include:
+          - arch: arm64
+            kver: 5.4
+    steps:
+      - name: Initialization environment
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get -qq update
+          #sudo apt-get -qq update && sudo apt-get -qq upgrade
+          sudo apt-get -qq install $(cat $DEPENDENCIES | tr '\n' ' ')
+          sudo apt-get -qq autoremove --purge
+          sudo apt-get -qq clean
+          sudo timedatectl set-timezone "$TZ"
+      
+      - name: Checkout kmod src
+        uses: actions/checkout@main 
+      
+      - name: Download Toolchains
+        env:
+          ARCH: ${{ matrix.arch }}
+          KVER: ${{ matrix.kver }}
+        run: |
+          mkdir -p $TC_DIR
+          cd $TC_DIR
+          [ $ARCH = armv7 ] && PKG_NAME="armv7-eabihf"
+          [ $ARCH = arm64 ] && PKG_NAME="aarch64"
+          [ $ARCH = mips  ] && PKG_NAME="mips32el"
+          wget $TC_LNK/$PKG_NAME/tarballs/$PKG_NAME--musl--stable-2020.02-2.tar.bz2
+          tar -xf $PKG_NAME*.tar.bz2
+          TC_DIR=$TC_DIR/$PKG_NAME--musl--stable-2020.02-2
+          TC_PREFIX=$( find $TC_DIR -maxdepth 1 -type d -name '*-buildroot-*' | xargs -- basename )
+          GCC_PATH=$TC_DIR/bin          
+          CROSS_COMPILE=$TC_DIR/bin/$TC_PREFIX-
+          echo "TC_DIR=$TC_DIR" >> $GITHUB_ENV
+          echo "GCC_PATH=$GCC_PATH" >> $GITHUB_ENV
+          echo "CROSS_COMPILE=$CROSS_COMPILE" >> $GITHUB_ENV
+      
+      - name: Download Linux Kernel sources
+        env:
+          KVER: ${{ matrix.kver }}
+        run: git clone https://github.com/torvalds/linux.git --depth 1 -b v$KVER linux
+      
+      - name: Patch Linux Kernel sources
+        id: patch
+        env:
+          ARCH: ${{ matrix.arch }}
+          KVER: ${{ matrix.kver }}
+        run: |
+          ls -la
+          if [ -e "./linux/scripts/dtc/dtc-lexer.l" ]; then
+              sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' ./linux/scripts/dtc/dtc-lexer.l
+          fi
+          if [ -e "./linux/scripts/dtc/dtc-lexer.lex.c_shipped" ]; then
+              sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' ./linux/scripts/dtc/dtc-lexer.lex.c_shipped
+          fi
+          mkdir -p ./linux/drivers/xmirp
+          cp -rf src/* ./linux/drivers/xmirp
+          if ! grep -q '+= xmirp/' ./linux/drivers/Makefile ; then
+              echo 'obj-y += xmirp/' >> ./linux/drivers/Makefile
+          fi
+          if ! grep -q 'drivers/xmirp/Kconfig' ./drivers/Kconfig ; then
+              sed -i '/endmenu/i source "drivers/xmirp/Kconfig"' ./linux/drivers/Kconfig 
+          fi
+          [ $ARCH = armv7 ] && ARCH_TAG="arm"
+          [ $ARCH = arm64 ] && ARCH_TAG="arm64"
+          [ $ARCH = mips  ] && ARCH_TAG="mips"
+          KCFG=kernel-$KVER-$ARCH.config
+          echo "" >> $KCFG
+          echo "CONFIG_XMIR_PATCHER=m" >> $KCFG
+          cp $KCFG ./linux/arch/$ARCH_TAG/configs/xq_defconfig
+          echo "ARCH_TAG=$ARCH_TAG" >> $GITHUB_ENV
+          echo "status=success" >> $GITHUB_OUTPUT
+      
+      - name: Build the kernel module
+        id: compile
+        if: steps.patch.outputs.status == 'success'
+        env: 
+          ARCH: ${{ matrix.arch }}
+          KVER: ${{ matrix.kver }}
+        run: |
+          cd $BUILD_ROOT
+          export PATH=${GCC_PATH}:${PATH}
+          make ARCH=$ARCH_TAG CROSS_COMPILE=$CROSS_COMPILE xq_defconfig
+          scripts/config --disable CONFIG_LOCALVERSION_AUTO
+          scripts/config --disable DEBUG_INFO
+          scripts/config --undefine GDB_SCRIPTS
+          scripts/config --undefine DEBUG_INFO_SPLIT
+          scripts/config --undefine DEBUG_INFO_REDUCED
+          scripts/config --undefine DEBUG_INFO_COMPRESSED
+          scripts/config --set-val  DEBUG_INFO_NONE       y
+          scripts/config --set-val  DEBUG_INFO_DWARF5     n
+          make ARCH=$ARCH_TAG CROSS_COMPILE=$CROSS_COMPILE scripts prepare
+          make ARCH=$ARCH_TAG CROSS_COMPILE=$CROSS_COMPILE modules M=./drivers/xmirp
+          OUT_DIR=$BUILD_ROOT/drivers/xmirp
+          if [ ! -e "$OUT_DIR/xmir_patcher.ko" ]; then
+              echo "ERROR: File xmir_patcher.ko not found!"
+              exit 1
+          fi
+          echo "OUT_DIR=$OUT_DIR" >> $GITHUB_ENV
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      - name: Upload OUT directory
+        uses: actions/upload-artifact@main
+        if: steps.compile.outputs.status == 'success'
+        env: 
+          ARCH: ${{ matrix.arch }}
+          KVER: ${{ matrix.kver }}
+        with:
+          name: kmod-xmir-${{ env.KVER }}-${{ env.ARCH }}
+          path: ${{ env.OUT_DIR }}
+          if-no-files-found: error 
+
+  release:
+    needs: [ check, build ]
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    strategy:
+      max-parallel: 1
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: kmod-*
+
+      - name: Put images into zip
+        env:
+          TAG: ${{ needs.check.outputs.tag }}
+        run: |
+          ls -la
+          mkdir -p public
+          for XDIR in ./kmod-*; do
+              if [ -d "$XDIR" ]; then
+                  NAME=$( basename $XDIR )
+                  KVER=$( echo $NAME | cut -d- -f3 )
+                  ARCH=$( echo $NAME | cut -d- -f4 )
+                  cp $XDIR/xmir_patcher.ko ./public/xmir_patcher-$KVER-$ARCH.ko
+              fi
+          done          
+          find ./public -type f -name 'xmir*' -exec sh -c 'zip -0 ./public/kmod-xmir-$TAG.zip -j {} {}/*' \;
+
+      - name: Upload assets
+        uses: andelf/nightly-release@main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.check.outputs.tag }}
+        with:
+          prerelease: false
+          tag_name: ${{ needs.check.outputs.tag }}${{ env.TAG_SUFFIX }}
+          name: '${{ needs.check.outputs.tag }}'
+          body: |
+            kmod for XMiR-Patcher ${{ needs.check.outputs.build_date }}-${{ needs.check.outputs.build_time }}
+            author: [remittor](https://github.com/remittor)
+          files: ./public/*.zip 
