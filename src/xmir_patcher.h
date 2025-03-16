@@ -17,6 +17,54 @@ static void * x_kzalloc(size_t size, gfp_t flags)
     return addr;
 }
 
+#if defined ( CONFIG_ARM64 )
+
+// support only CONFIG_MMU !!!
+extern unsigned long __copy_from_user(void * to, const void __user * from, unsigned long n);
+extern unsigned long __copy_to_user(void __user * to, const void * from, unsigned long n);
+
+#elif defined ( CONFIG_ARM )
+
+// support only CONFIG_MMU !!!
+extern unsigned long arm_copy_from_user(void * to, const void __user * from, unsigned long n);
+extern unsigned long arm_copy_to_user(void __user * to, const void * from, unsigned long n);
+
+#elif defined ( CONFIG_MIPS )
+
+//#error "Arch MIPS currently not supported!"
+
+#else
+#error "Arch not supported."
+#endif
+
+static size_t x_copy_from_user(void * to, const void __user * from, size_t n)
+{
+#if defined ( CONFIG_ARM64 )
+    n = __copy_from_user(to, from, n);
+#elif defined ( CONFIG_ARM )
+    //unsigned int __ua_flags = uaccess_save_and_enable();
+    n = arm_copy_from_user(to, from, n);
+    //uaccess_restore(__ua_flags);
+#else // MIPS
+    // option CONFIG_EVA not supported !!!
+    n = copy_from_user(to, from, n);
+#endif
+    return n;
+}
+
+static size_t x_copy_to_user(void __user * to, const void * from, size_t n)
+{
+#if defined ( CONFIG_ARM64 )
+    n = __copy_from_user(to, from, n);
+#elif defined ( CONFIG_ARM )
+    n = arm_copy_to_user(to, from, n);
+#else // MIPS
+    // option CONFIG_EVA not supported !!!
+    n = copy_to_user(to, from, n);
+#endif
+    return n;
+}
+
 extern struct mutex mtd_table_mutex;
 extern struct mtd_info * __mtd_next_device(int index);
 extern uint64_t mtdpart_get_offset(const struct mtd_info * mtd);

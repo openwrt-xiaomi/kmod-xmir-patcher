@@ -32,8 +32,6 @@ MODULE_PARM_DESC(name, "The name of chr device");
 #define END_OF_CMD '\n'
 #define MAX_RESP_LEN 2000
 
-#define MAX_MTD_IDX  56
-
 typedef struct mod_data {
     char   cmd[MAX_CMD_LEN + 1];
     char * cmd_arg[MAX_CMD_ARG + 1];
@@ -260,7 +258,7 @@ static ssize_t dev_write(struct file * fileptr, const char * buffer, size_t len,
         pr_err("recv: Invalid arg len = %zu", len);
         return -EINVAL;
     }
-    retval = copy_from_user(g.cmd, buffer, len);
+    retval = x_copy_from_user(g.cmd, buffer, len);
     if (retval != 0) {
         pr_err("recv: copy_from_user ret_val = %lu", retval);
         g.cmd[0] = 0;
@@ -320,14 +318,14 @@ static ssize_t dev_read(struct file * fileptr, char * buffer, size_t len, loff_t
         pr_err("send: Invalid resp len = %d (len = %zu)", total_len, len);
         return -EFBIG;
     }
-    retval = copy_to_user(buffer, prefix, prefix_len);
+    retval = x_copy_to_user(buffer, prefix, prefix_len);
     if (retval != 0) {
         pr_err("send: Failed to send %d characters to the user", prefix_len);
         return -EFAULT;
     }
     *offset = prefix_len;
     if (resp_len) {
-        retval = copy_to_user(buffer + *offset, g.resp, resp_len);
+        retval = x_copy_to_user(buffer + *offset, g.resp, resp_len);
         if (retval != 0) {
             pr_err("send: failed to send %d characters to the user", resp_len);
             return -EFAULT;
