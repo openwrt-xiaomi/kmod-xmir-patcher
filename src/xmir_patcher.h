@@ -164,7 +164,7 @@ static int init_mtd_base_info(bool show_error)
 static int get_mtd_index(const struct mtd_info * mtd)
 {
     size_t index_offset = get_mtd_info_index_offset();
-    if (index_offset) {
+    if (mtd && index_offset) {
         int * ptr = (int *)((char *)mtd + index_offset);
         return *ptr;
     }
@@ -189,7 +189,7 @@ static size_t get_mtd_info_name_offset(void)
 static const char * get_mtd_name(const struct mtd_info * mtd)
 {
     size_t name_offset = get_mtd_info_name_offset();
-    if (name_offset) {
+    if (mtd && name_offset) {
         const char ** ptr = (const char **)((char *)mtd + name_offset);
         return *ptr;
     }
@@ -219,16 +219,17 @@ static struct mtd_info * get_mtd_info_dev(const char * name, int index, bool loc
     if (init_mtd_base_info(true) != 0) {
         return ERR_PTR(-13);
     }
-    lock_mtd_table();
     if (name) {
         size_t name_offset = get_mtd_info_name_offset();
         if (name_offset == 0) {
             if (show_error) {
                 pr_err("ERROR: cannot find name offset for mtd_info");
             }
-            rc = -15;
-            goto err;
+            return ERR_PTR(-15);
         }
+    }
+    lock_mtd_table();
+    if (name) {
         mtd = get_mtd_by_name(name);
         if (!mtd) {
             if (show_error) {
@@ -241,7 +242,7 @@ static struct mtd_info * get_mtd_info_dev(const char * name, int index, bool loc
     }
     if (index >= 0) {
         mtd = _get_mtd_next(index);
-        if (mtd != NULL && !IS_ERR(mtd)) {
+        if (!IS_ERR_OR_NULL(mtd)) {
             if (get_mtd_index(mtd) == index) {
                 if (!lock) {
                     unlock_mtd_table();
