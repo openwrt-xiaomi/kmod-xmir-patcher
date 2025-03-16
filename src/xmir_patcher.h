@@ -19,11 +19,12 @@ static void * x_kzalloc(size_t size, gfp_t flags)
 
 #if defined ( CONFIG_ARM64 )
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 8, 0)
+//#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 8, 0)
 extern unsigned long __arch_copy_from_user(void * to, const void __user * from, unsigned long n);
 extern unsigned long __arch_copy_to_user(void __user * to, const void * from, unsigned long n);
 #define __arm64_copy_from_user  __arch_copy_from_user
 #define __arm64_copy_to_user    __arch_copy_to_user
+/*
 #else
 // support only CONFIG_MMU !!!
 extern unsigned long __copy_from_user(void * to, const void __user * from, unsigned long n);
@@ -31,7 +32,7 @@ extern unsigned long __copy_to_user(void __user * to, const void * from, unsigne
 #define __arm64_copy_from_user  __copy_from_user
 #define __arm64_copy_to_user    __copy_to_user
 #endif
-
+*/
 #elif defined ( CONFIG_ARM )
 
 // support only CONFIG_MMU !!!
