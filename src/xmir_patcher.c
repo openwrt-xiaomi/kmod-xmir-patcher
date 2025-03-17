@@ -21,11 +21,6 @@
 #error "Must be compiled as a module."
 #endif
 
-
-static char * g_dev_name = "xmirp";
-module_param_named(name, g_dev_name, charp, S_IRUGO);
-MODULE_PARM_DESC(name, "The name of chr device");
-
 #define MDATA_MAGIC        0xC0DE
 #define MDATA_MAGIC_OFFSET 30
 #define MDATA_PTR_OFFSET   32
@@ -44,18 +39,8 @@ typedef struct mod_data {
     char   resp[MAX_RESP_LEN + 1];
     int    resp_code;   // def: INT_MIN
 
-    int    dev_major;
-    struct class  * mod_class;
-    struct device * mod_device;
-    struct cdev   * mod_cdev;
-
-    uint64_t dev_open_counter;
-
     struct mutex * dev_mutex;
 
-    struct file_operations fops;
-    char   dummy1[128];
-    
     int    mtd_dev_numbers;
     int    mtd_max_index;
     size_t mtd_index_offset;
@@ -103,6 +88,7 @@ static const struct kernel_param_ops g_cmd_ops = {
 };
 module_param_cb(cmd, &g_cmd_ops, NULL, 0664);
 
+// =========================================================================================
 
 static int update_resp(int code, const char * resp)
 {
@@ -308,137 +294,14 @@ static int param_get_cmd(char * buffer, const struct kernel_param * kp)
     return len;
 }
 
-static ssize_t dev_write(struct file * fileptr, const char * buffer, size_t len, loff_t * offset)
-{
-    unsigned long retval;
-    int rc;
-    int err_code;
-    
-    pr_info("recv: buffer = %px, len = %zu, offset = %d", buffer, len, offset ? (int)*offset : -1);
-    update_resp(INT_MIN, NULL);
-    g.cmd[0] = 0;
-    g.cmd_arg_num = 0;
-
-    if (offset && *offset != 0) {
-        pr_err("recv: Invalid arg offset = %d (len = %zu)", (int)*offset, len);
-        return -EINVAL;
-    }
-    if (len < 2 || len > MAX_CMD_LEN) {
-        pr_err("recv: Invalid arg len = %zu", len);
-        return -EINVAL;
-    }
-    retval = x_copy_from_user(g.cmd, buffer, len);
-    if (retval != 0) {
-        pr_err("recv: copy_from_user ret_val = %lu", retval);
-        g.cmd[0] = 0;
-        return -EFAULT;
-    }
-    if (g.cmd[len - 1] != END_OF_CMD) {
-        pr_err("recv: Command terminator not found. (len = %zu)", len);
-        g.cmd[0] = 0;
-        return -EINVAL;
-    }
-    //pr_info("recv: CMD LEN = %zu", len);
-    g.cmd[len - 1] = 0;
-    g.cmd[len] = 0;
-    pr_info("recv: CMD = \"%s\" ", g.cmd);
-    rc = dev_process_command(g.cmd);
-    err_code = update_resp(rc, NULL);
-    if (err_code) {
-        pr_err("recv: Response too large (len = %zu)", strlen(g.resp));
-    }
-    pr_info("recv: resp code = %d (len = %zu)", g.resp_code, strlen(g.resp));
-    if (offset) {
-        *offset = len;
-    }
-    return len;
-}
-
-static ssize_t dev_read(struct file * fileptr, char * buffer, size_t len, loff_t * offset)
-{
-    unsigned long retval = 0;
-    size_t resp_len = strlen(g.resp);
-    char prefix[20] = {0};
-    int prefix_len;
-    int total_len;
-
-    if (fileptr->private_data != NULL) {
-        fileptr->private_data = NULL;  // data not readed
-        pr_info("send: EOF");
-        return 0;
-    }
-    if (g.resp_code == INT_MIN) {
-        fileptr->private_data = NULL;
-        pr_info("send: sent empty response to user (resp_code = %d)", g.resp_code);
-        return 0;
-    }
-    prefix_len = snprintf(prefix, sizeof(prefix), "%d|", g.resp_code);
-    total_len = prefix_len + resp_len;
-    if (*offset >= total_len) {
-        fileptr->private_data = NULL;
-        pr_err("send: eof");
-        return 0;
-    }
-    if (*offset != 0) {
-        pr_err("send: Invalid arg offset = %d", (int)*offset);
-        return -EINVAL;
-    }
-    if (prefix_len + resp_len >= len) {
-        pr_err("send: Invalid resp len = %d (len = %zu)", total_len, len);
-        return -EFBIG;
-    }
-    retval = x_copy_to_user(buffer, prefix, prefix_len);
-    if (retval != 0) {
-        pr_err("send: Failed to send %d characters to the user", prefix_len);
-        return -EFAULT;
-    }
-    *offset = prefix_len;
-    if (resp_len) {
-        retval = x_copy_to_user(buffer + *offset, g.resp, resp_len);
-        if (retval != 0) {
-            pr_err("send: failed to send %d characters to the user", resp_len);
-            return -EFAULT;
-        }
-        *offset += resp_len;
-    }
-    pr_info("send: sent %d characters to the user: \"%s\"", (int)*offset, g.resp);
-    fileptr->private_data = (void *)(size_t)*offset;  // resp readed
-    return *offset;
-}
-
-static int dev_open(struct inode * inodep, struct file * fileptr)
-{
-    if (!mutex_trylock(g.dev_mutex)) {
-        pr_err("open: device '%s' in use by another process", g_dev_name);
-        return -EBUSY;
-    }
-    //if (!try_module_get(THIS_MODULE)) {
-    //    return -EFAULT;
-    //}
-    fileptr->private_data = NULL;
-    g.dev_open_counter++;
-    pr_info("open: device '%s' has been opened %llu times", g_dev_name, g.dev_open_counter);
-    return 0;
-}
-
-static int dev_close(struct inode * inodep, struct file * fileptr)
-{
-    fileptr->private_data = NULL;
-    //module_put(THIS_MODULE);
-    mutex_unlock(g.dev_mutex);
-    pr_info("close: device '%s' successfully closed", g_dev_name);
-    return 0;
-}
-
 static int __init mod_init(void)
 {
     int err = -EFAULT;
-    int rc;
     char * mdata = NULL;
     struct mod_data ** gptr;
     uint16_t * magic_ptr;
 
-    pr_info("init: ============> dev name: '%s'", g_dev_name);
+    pr_info("init: ============> ");
 
     if (strncmp(THIS_MODULE->name, "xmir", 4) != 0) {
         pr_err("init: Unsupported module name: '%s'", THIS_MODULE->name);
@@ -458,19 +321,12 @@ static int __init mod_init(void)
     magic_ptr = (uint16_t *)(THIS_MODULE->name + MDATA_MAGIC_OFFSET);
     *magic_ptr = MDATA_MAGIC;
 
-    g.mod_cdev = x_kzalloc(sizeof(struct cdev) + 128, GFP_KERNEL);
     g.dev_mutex = x_kzalloc(sizeof(struct mutex) + 64, GFP_KERNEL);
-    if (!g.mod_cdev || !g.dev_mutex) {
+    if (!g.dev_mutex) {
         pr_err("init: cannot allocate kernel objects");
         err = -ENOMEM;
         goto err1;
     }
-    g.fops.owner = THIS_MODULE;
-    g.fops.open = dev_open;
-    g.fops.read = dev_read;
-    g.fops.write = dev_write;
-    g.fops.release = dev_close;
-
     g.resp_code = INT_MIN;
     
     mutex_init(g.dev_mutex);
@@ -481,55 +337,10 @@ static int __init mod_init(void)
         goto err1;
 #endif
 
-    g.dev_major = register_chrdev(0, g_dev_name, &g.fops);
-    if (g.dev_major < 0) {
-        pr_err("init: failed to register a major number (err = %d)", g.dev_major);
-        err = g.dev_major;
-        goto err1;
-    }
-    pr_info("init: module registered with major number %d", g.dev_major);
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0)
-    g.mod_class = class_create(g_dev_name);
-#else
-    g.mod_class = class_create(THIS_MODULE, g_dev_name);    
-#endif
-    if (IS_ERR_OR_NULL(g.mod_class)) {
-        pr_err("init: failed to register device class (err = %ld)", PTR_ERR(g.mod_class));
-        err = -EAGAIN;
-        goto err2;
-    }
-    pr_info("init: device class registered correctly");
-
-    g.mod_device = device_create(g.mod_class, NULL, MKDEV(g.dev_major, 0), NULL, g_dev_name);
-    if (IS_ERR_OR_NULL(g.mod_device)) {
-        pr_err("init: failed to create the device '%s' (err = %ld)", g_dev_name, PTR_ERR(g.mod_device));
-        err = PTR_ERR(g.mod_device); 
-        goto err3;
-    }
-    pr_info("init: device '%s' created correctly", g_dev_name);
-    
-    cdev_init(g.mod_cdev, &g.fops);
-    //g.mod_cdev->owner = THIS_MODULE;
-    rc = cdev_add(g.mod_cdev, MKDEV(g.dev_major, 0), 1);
-    if (rc < 0) {
-        pr_err("init: failed to create the chr device (err = %d)", rc);
-        err = -EMLINK; 
-        goto err4;
-    }
-    pr_info("init: char device created correctly");
+    pr_info("init: module inited!");
     return 0;
     
-//err5:
-//    cdev_del(g.mod_cdev);
-err4:
-    device_destroy(g.mod_class, MKDEV(g.dev_major, 0));
-err3:
-    class_destroy(g.mod_class);
-err2:
-    unregister_chrdev(g.dev_major, g_dev_name);
 err1:
-    kfree(g.mod_cdev);
     kfree(g.dev_mutex);
     kfree(mdata);
     return err;
