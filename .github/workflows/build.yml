@@ -94,6 +94,9 @@ jobs:
         kver:
           - 4.4
           - 5.4
+        preempt:
+          - p_on
+          - p_off
         isTestOrFake:
           - ${{ needs.check.outputs.test_build == 'true' || needs.check.outputs.fake_build == 'true' }}
         exclude:
@@ -101,6 +104,7 @@ jobs:
         include:
           - arch: arm64
             kver: 5.4
+            preempt: p_on
     steps:
       - name: Initialization environment
         env:
@@ -146,6 +150,7 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
           KVER: ${{ matrix.kver }}
+          PREEMPT: ${{ matrix.preempt }}
         run: |
           ls -la
           if [ -e "./linux/scripts/dtc/dtc-lexer.l" ]; then
@@ -168,6 +173,31 @@ jobs:
           KCFG=kernel-$KVER-$ARCH.config
           echo "" >> $KCFG
           echo "CONFIG_XMIR_PATCHER=m" >> $KCFG
+          if [ $PREEMPT = p_on ]; then
+              sed -i '/CONFIG_PREEMPT_NONE/d' $KCFG
+              echo '# CONFIG_PREEMPT_NONE is not set' >> $KCFG
+              sed -i '/CONFIG_PREEMPT/d' $KCFG
+              echo 'CONFIG_PREEMPT=y' >> $KCFG
+              sed -i '/CONFIG_PREEMPT_COUNT/d' $KCFG
+              echo 'CONFIG_PREEMPT_COUNT=y' >> $KCFG
+              sed -i '/CONFIG_PREEMPTION/d' $KCFG
+              echo 'CONFIG_PREEMPTION=y' >> $KCFG
+              sed -i '/CONFIG_RCU_BOOST/d' $KCFG
+              echo '# CONFIG_RCU_BOOST is not set' >> $KCFG
+          else
+              sed -i '/CONFIG_PREEMPT/d' $KCFG
+              echo '# CONFIG_PREEMPT is not set' >> $KCFG
+              sed -i '/CONFIG_PREEMPTION/d' $KCFG
+              echo '# CONFIG_PREEMPTION is not set' >> $KCFG
+              sed -i '/CONFIG_PREEMPT_COUNT/d' $KCFG
+              echo '# CONFIG_PREEMPT_COUNT is not set' >> $KCFG
+              sed -i '/CONFIG_PREEMPT_NONE/d' $KCFG
+              echo 'CONFIG_PREEMPT_NONE=y' >> $KCFG
+          fi
+          sed -i '/CONFIG_PREEMPT_VOLUNTARY/d' $KCFG
+          echo '# CONFIG_PREEMPT_VOLUNTARY is not set' >> $KCFG
+          sed -i '/CONFIG_DEBUG_PREEMPT/d' $KCFG
+          echo '# CONFIG_DEBUG_PREEMPT is not set' >> $KCFG
           cp $KCFG ./linux/arch/$ARCH_TAG/configs/xq_defconfig
           echo "ARCH_TAG=$ARCH_TAG" >> $GITHUB_ENV
           echo "status=success" >> $GITHUB_OUTPUT
@@ -178,6 +208,7 @@ jobs:
         env: 
           ARCH: ${{ matrix.arch }}
           KVER: ${{ matrix.kver }}
+          PREEMPT: ${{ matrix.preempt }}
         run: |
           cd $BUILD_ROOT
           export PATH=${GCC_PATH}:${PATH}
@@ -190,6 +221,8 @@ jobs:
           scripts/config --undefine DEBUG_INFO_COMPRESSED
           scripts/config --set-val  DEBUG_INFO_NONE       y
           scripts/config --set-val  DEBUG_INFO_DWARF5     n
+          scripts/config --undefine CONFIG_PREEMPT_VOLUNTARY
+          scripts/config --undefine CONFIG_DEBUG_PREEMPT
           make ARCH=$ARCH_TAG CROSS_COMPILE=$CROSS_COMPILE scripts prepare
           make ARCH=$ARCH_TAG CROSS_COMPILE=$CROSS_COMPILE modules M=./drivers/xmirp
           OUT_DIR=$BUILD_ROOT/drivers/xmirp
@@ -206,8 +239,9 @@ jobs:
         env: 
           ARCH: ${{ matrix.arch }}
           KVER: ${{ matrix.kver }}
+          PREEMPT: ${{ matrix.preempt }}
         with:
-          name: kmod-xmir-${{ env.KVER }}-${{ env.ARCH }}
+          name: kmod-xmir-${{ env.KVER }}-${{ env.ARCH }}-${{ env.PREEMPT }}
           path: ${{ env.OUT_DIR }}
           if-no-files-found: error 
 
@@ -235,7 +269,12 @@ jobs:
                   NAME=$( basename $XDIR )
                   KVER=$( echo $NAME | cut -d- -f3 )
                   ARCH=$( echo $NAME | cut -d- -f4 )
-                  cp $XDIR/xmir_patcher.ko ./public/xmir_patcher-$KVER-$ARCH.ko
+                  PREEMPT=$( echo $NAME | cut -d- -f5 )
+                  SUFFIX=
+                  if [ $PREEMPT = p_on ]; then
+                      SUFFIX="-preempt"
+                  fi
+                  cp $XDIR/xmir_patcher.ko ./public/xmir_patcher-$KVER-$ARCH$SUFFIX.ko
               fi
           done          
           find ./public -type f -name 'xmir*' -exec sh -c 'zip -0 ./public/kmod-xmir-$TAG.zip -j {} {}/*' \;
