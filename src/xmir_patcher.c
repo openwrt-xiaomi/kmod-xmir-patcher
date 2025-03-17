@@ -26,6 +26,10 @@ static char * g_dev_name = "xmirp";
 module_param_named(name, g_dev_name, charp, S_IRUGO);
 MODULE_PARM_DESC(name, "The name of chr device");
 
+#define MDATA_MAGIC        0xC0DE
+#define MDATA_MAGIC_OFFSET 30
+#define MDATA_PTR_OFFSET   32
+
 #define MAX_CMD_LEN 255
 #define MAX_CMD_ARG 8
 #define ARG_DELIM '|'
@@ -73,6 +77,12 @@ typedef struct _mod_data {
 
 #define g \
     ((T_mod_data *)(THIS_MODULE->name + 32))->data
+
+static bool is_mod_data_allocated(void)
+{
+    uint16_t * magic_ptr = (uint16_t *)(THIS_MODULE->name + MDATA_MAGIC_OFFSET);
+    return (*magic_ptr == MDATA_MAGIC) ? true : false;
+}
 
 #undef pr_err
 #undef pr_warn
@@ -367,6 +377,7 @@ static int __init mod_init(void)
     int rc;
     char * mdata = NULL;
     struct mod_data ** gptr;
+    uint16_t * magic_ptr;
 
     pr_info("init: ============> dev name: '%s'", g_dev_name);
 
@@ -374,7 +385,7 @@ static int __init mod_init(void)
         pr_err("init: Unsupported module name: '%s'", THIS_MODULE->name);
         return -EFAULT;
     }
-    if (strlen(THIS_MODULE->name) >= 30) {
+    if (strlen(THIS_MODULE->name) >= MDATA_MAGIC_OFFSET - 1) {
         pr_err("init: unsupported module name: '%s'", THIS_MODULE->name);
         return -EFAULT;
     }
@@ -383,8 +394,10 @@ static int __init mod_init(void)
         pr_err("init: cannot allocate %zu bytes for data", sizeof(struct mod_data));
         return -ENOMEM;
     }
-    gptr = (struct mod_data **)(THIS_MODULE->name + 32);
+    gptr = (struct mod_data **)(THIS_MODULE->name + MDATA_PTR_OFFSET);
     *gptr = (struct mod_data *)mdata;
+    magic_ptr = (uint16_t *)(THIS_MODULE->name + MDATA_MAGIC_OFFSET);
+    *magic_ptr = MDATA_MAGIC;
 
     g.mod_cdev = x_kzalloc(sizeof(struct cdev) + 128, GFP_KERNEL);
     g.dev_mutex = x_kzalloc(sizeof(struct mutex) + 64, GFP_KERNEL);
