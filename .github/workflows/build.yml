@@ -174,9 +174,8 @@ jobs:
           echo "" >> $KCFG
           echo "CONFIG_XMIR_PATCHER=m" >> $KCFG
           if [ $PREEMPT = p_on ]; then
-              sed -i '/CONFIG_PREEMPT_NONE/d' $KCFG
-              echo  '# CONFIG_PREEMPT_NONE is not set' >> $KCFG
-              sed -i '/CONFIG_PREEMPT/d' $KCFG
+              sed -i '/CONFIG_PREEMPT=/d' $KCFG
+              sed -i '/# CONFIG_PREEMPT/d' $KCFG
               echo    'CONFIG_PREEMPT=y' >> $KCFG
               sed -i '/CONFIG_PREEMPTION/d' $KCFG
               echo    'CONFIG_PREEMPTION=y' >> $KCFG
@@ -184,15 +183,18 @@ jobs:
               echo    'CONFIG_PREEMPT_COUNT=y' >> $KCFG
               sed -i '/CONFIG_RCU_BOOST/d' $KCFG
               echo  '# CONFIG_RCU_BOOST is not set' >> $KCFG
-          else
               sed -i '/CONFIG_PREEMPT_NONE/d' $KCFG
-              echo    'CONFIG_PREEMPT_NONE=y' >> $KCFG
-              sed -i '/CONFIG_PREEMPT/d' $KCFG
+              echo  '# CONFIG_PREEMPT_NONE is not set' >> $KCFG
+          else
+              sed -i '/CONFIG_PREEMPT=/d' $KCFG
+              sed -i '/# CONFIG_PREEMPT/d' $KCFG
               echo  '# CONFIG_PREEMPT is not set' >> $KCFG
               sed -i '/CONFIG_PREEMPTION/d' $KCFG
               echo  '# CONFIG_PREEMPTION is not set' >> $KCFG
               sed -i '/CONFIG_PREEMPT_COUNT/d' $KCFG
               echo  '# CONFIG_PREEMPT_COUNT is not set' >> $KCFG
+              sed -i '/CONFIG_PREEMPT_NONE/d' $KCFG
+              echo    'CONFIG_PREEMPT_NONE=y' >> $KCFG
           fi
           sed -i '/CONFIG_PREEMPT_VOLUNTARY/d' $KCFG
           echo  '# CONFIG_PREEMPT_VOLUNTARY is not set' >> $KCFG
