@@ -14,11 +14,11 @@ Linux kernel module for hacking xq kernel
 ```
 insmod /tmp/xmir_patcher.ko
 
-echo 'get_mtd_info|bdata' > /dev/xmirp
-cat /dev/xmirp
+echo 'get_mtd_info|bdata' > /sys/module/xmir_patcher/parameters/cmd
+cat /sys/module/xmir_patcher/parameters/cmd
 
-echo 'set_mtd_rw|bdata' > /dev/xmirp
-cat /dev/xmirp
+echo 'set_mtd_rw|bdata' > /sys/module/xmir_patcher/parameters/cmd
+cat /sys/module/xmir_patcher/parameters/cmd
 ```
 
 ## Donations
