@@ -94,6 +94,16 @@ static bool is_mod_data_allocated(void)
 
 #include "xmir_patcher.h"
 
+static int param_set_cmd(const char * val, const struct kernel_param * kp);
+static int param_get_cmd(char * buffer, const struct kernel_param * kp);
+
+static const struct kernel_param_ops g_cmd_ops = {
+    .set = param_set_cmd,
+    .get = param_get_cmd,
+};
+module_param_cb(cmd, &g_cmd_ops, NULL, 0664);
+
+
 static int update_resp(int code, const char * resp)
 {
     g.resp_code = code;
@@ -248,6 +258,55 @@ static int dev_process_command(const char * cmd)
 }
 
 // =========================================================================================
+
+static int param_set_cmd(const char * val, const struct kernel_param * kp)
+{
+    size_t len = (val) ? strlen(val) : 0;
+    int rc;
+    int err_code;
+
+    if (!is_mod_data_allocated()) {
+        return -ETXTBSY;
+    }
+    update_resp(INT_MIN, NULL);
+    g.cmd[0] = 0;
+    g.cmd_arg_num = 0;
+
+    if (len < 2 || len > MAX_CMD_LEN) {
+        pr_err("RECV: Invalid arg len = %zu, value = '%s'", len, val);
+        return -EINVAL;
+    }
+    memcpy(g.cmd, val, len + 1);
+    if (g.cmd[len - 1] == END_OF_CMD) {
+        g.cmd[len - 1] = 0;
+        len--;
+    }
+    pr_info("RECV: CMD = \"%s\" ", g.cmd);
+    rc = dev_process_command(g.cmd);
+    err_code = update_resp(rc, NULL);
+    if (err_code) {
+        pr_err("RECV: Response too large (len = %zu)", strlen(g.resp));
+    }
+    pr_info("RECV: resp code = %d (len = %zu)", g.resp_code, strlen(g.resp));
+    return 0;
+}
+
+static int param_get_cmd(char * buffer, const struct kernel_param * kp)
+{
+    int len;    
+
+    if (!is_mod_data_allocated()) {
+        return -ETXTBSY;
+    }
+    if (g.resp_code == INT_MIN) {
+        pr_info("SEND: sent empty response to user (resp_code is invalid)");
+        buffer[0] = 0;
+        return 0;
+    }
+    len = snprintf(buffer, 4000, "%d|%s", g.resp_code, g.resp);
+    pr_info("SEND: sent %d characters to the user: \"%s\"", len, g.resp);
+    return len;
+}
 
 static ssize_t dev_write(struct file * fileptr, const char * buffer, size_t len, loff_t * offset)
 {
