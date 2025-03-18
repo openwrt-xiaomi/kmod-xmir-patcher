@@ -164,7 +164,7 @@ jobs:
           if ! grep -q '+= xmirp/' ./linux/drivers/Makefile ; then
               echo 'obj-y += xmirp/' >> ./linux/drivers/Makefile
           fi
-          if ! grep -q 'drivers/xmirp/Kconfig' ./drivers/Kconfig ; then
+          if ! grep -q 'drivers/xmirp/Kconfig' ./linux/drivers/Kconfig ; then
               sed -i '/endmenu/i source "drivers/xmirp/Kconfig"' ./linux/drivers/Kconfig 
           fi
           [ $ARCH = armv7 ] && ARCH_TAG="arm"
@@ -175,6 +175,7 @@ jobs:
           echo "CONFIG_XMIR_PATCHER=m" >> $KCFG
           if [ $PREEMPT = p_on ]; then
               sed -i '/^config PREEMPT/a \\tdefault y' ./linux/kernel/Kconfig.preempt
+              sed -i 'a/\\tdefault PREEMPT_NONE/\\tdefault PREEMPT/g' ./linux/kernel/Kconfig.preempt
               sed -i '/CONFIG_PREEMPT=/d' $KCFG
               sed -i '/# CONFIG_PREEMPT/d' $KCFG
               echo    'CONFIG_PREEMPT=y' >> $KCFG
@@ -228,6 +229,9 @@ jobs:
           scripts/config --set-val  DEBUG_INFO_DWARF5     n
           scripts/config --undefine CONFIG_PREEMPT_VOLUNTARY
           scripts/config --undefine CONFIG_DEBUG_PREEMPT
+          echo "========================== config =========================="
+          cat .config
+          echo "=========================================================="
           make ARCH=$ARCH_TAG CROSS_COMPILE=$CROSS_COMPILE scripts prepare
           echo "############ build kmod ################"
           make ARCH=$ARCH_TAG CROSS_COMPILE=$CROSS_COMPILE modules M=./drivers/xmirp
