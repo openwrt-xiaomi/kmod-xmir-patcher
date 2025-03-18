@@ -248,8 +248,8 @@ jobs:
           scripts/config --undefine DEBUG_INFO_COMPRESSED
           scripts/config --set-val  DEBUG_INFO_NONE       y
           scripts/config --set-val  DEBUG_INFO_DWARF5     n
-          scripts/config --undefine CONFIG_PREEMPT_VOLUNTARY
-          scripts/config --undefine CONFIG_DEBUG_PREEMPT
+          #scripts/config --undefine CONFIG_PREEMPT_VOLUNTARY
+          #scripts/config --undefine CONFIG_DEBUG_PREEMPT
           echo "========================== config =========================="
           cat .config
           echo "=========================================================="
