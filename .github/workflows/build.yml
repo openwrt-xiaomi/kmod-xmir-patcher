@@ -174,7 +174,7 @@ jobs:
           echo "" >> $KCFG
           echo "CONFIG_XMIR_PATCHER=m" >> $KCFG
           if [ $PREEMPT = p_on ]; then
-              sed -i '/^config PREEMPT/a \\tdefault y' ./kernel/Kconfig.preempt
+              sed -i '/^config PREEMPT/a \\tdefault y' ./linux/kernel/Kconfig.preempt
               sed -i '/CONFIG_PREEMPT=/d' $KCFG
               sed -i '/# CONFIG_PREEMPT/d' $KCFG
               echo    'CONFIG_PREEMPT=y' >> $KCFG
@@ -187,7 +187,7 @@ jobs:
               sed -i '/CONFIG_PREEMPT_NONE/d' $KCFG
               echo  '# CONFIG_PREEMPT_NONE is not set' >> $KCFG
           else
-              sed -i '/^config PREEMPT/a \\tdefault n' ./kernel/Kconfig.preempt
+              sed -i '/^config PREEMPT/a \\tdefault n' ./linux/kernel/Kconfig.preempt
               sed -i '/CONFIG_PREEMPT=/d' $KCFG
               sed -i '/# CONFIG_PREEMPT/d' $KCFG
               echo  '# CONFIG_PREEMPT is not set' >> $KCFG
