@@ -146,7 +146,7 @@ static int get_mtd_info(int anum, char * arg[])
         addr = mtdpart_get_offset(mtd);
         size = mtd_get_device_size(mtd);
         lock = mtd_is_locked(mtd, 0, size); 
-        snprintf(g.resp, MAX_RESP_LEN, "%d|%s|0x%llx|0x%llx|0x%x|%d\n", mtd_idx, name, addr, size, flags, lock);
+        snprintf(g.resp, MAX_RESP_LEN, "%d|%s|0x%llx|0x%llx|0x%x|%d", mtd_idx, name, addr, size, flags, lock);
         unlock_mtd_table();
         return 0;
     }
@@ -181,7 +181,7 @@ static int set_mtd_rw(int anum, char * arg[])
             return -32;
         }
         mtd->flags |= MTD_WRITEABLE;
-        snprintf(g.resp, MAX_RESP_LEN, "%d|0x%x\n", mtd_idx, mtd->flags);
+        snprintf(g.resp, MAX_RESP_LEN, "%d|0x%x", mtd_idx, mtd->flags);
         put_mtd_device(mtd);
         pr_info("CMD: set RW flag for MTD[%d] device", mtd_idx);
         return 0;
@@ -290,7 +290,9 @@ static int param_get_cmd(char * buffer, const struct kernel_param * kp)
         return 0;
     }
     len = snprintf(buffer, 4000, "%d|%s", g.resp_code, g.resp);
-    pr_info("SEND: sent %d characters to the user: \"%s\"", len, g.resp);
+    pr_info("SEND: sent %d characters to the user: \"%s\"", len, buffer);
+    buffer[len++] = '\n';
+    buffer[len] = 0;
     return len;
 }
 
