@@ -231,6 +231,9 @@ static struct mtd_info * get_mtd_info_dev(const char * name, int index, bool loc
     lock_mtd_table();
     if (name) {
         mtd = get_mtd_by_name(name);
+        if (!mtd && strcmp(name, "bdata") == 0) {
+            mtd = get_mtd_by_name("Bdata");
+        }
         if (!mtd) {
             if (show_error) {
                 pr_err("ERROR: cannot find MTD dev by name = '%s'", name);
