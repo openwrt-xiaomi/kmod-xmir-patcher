@@ -97,12 +97,17 @@ jobs:
         kver:
           - 4.4
           - 5.4
+          - 6.6
         preempt:
           - p_off
           - p_on
         isTestOrFake:
           - ${{ needs.check.outputs.test_build == 'true' || needs.check.outputs.fake_build == 'true' }}
         exclude:
+          - arch: armv7
+            kver: 6.6
+          - arch: mips
+            kver: 6.6
           - { isTestOrFake: true }
         include:
           - arch: arm64
