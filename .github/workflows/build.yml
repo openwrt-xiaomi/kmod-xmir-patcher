@@ -4,15 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       test_build:
-        description: 'Test build'
-        required: false
+        description: 'Test build (only arm64 5.4)'
+        required: true
         default: 'false'
         type: choice
         options:
         - true
         - false
       fake_build:
-        description: 'Fake build'
+        description: 'Fake build (only arm64 5.4)'
         required: false
         default: 'false'
         type: choice
@@ -33,7 +33,7 @@ env:
   REPO_LNK: openwrt-xiaomi/kmod-xmir-patcher
   REPO_BRANCH: master
   TAG_PREFIX: v
-  BUILD_ROOT: ${{ github.workspace }}/linux
+  LNX: ${{ github.workspace }}/linux
   DEPENDENCIES: ${{ github.workspace }}/dependencies-ubuntu.txt
   TC_DIR: ${{ github.workspace }}/tc
   TC_LNK: https://toolchains.bootlin.com/downloads/releases/toolchains
@@ -90,7 +90,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [ armv7, arm64, mips ]
+        arch:
+          - arm64
+          - armv7
+          - mips
         kver:
           - 4.4
           - 5.4
@@ -105,46 +108,88 @@ jobs:
           - arch: arm64
             kver: 5.4
             preempt: p_on
+
+    container:
+      image: ghcr.io/openwrt/sdk:${{ matrix.arch == 'arm64' && 'aarch64_generic' || matrix.arch == 'armv7' && 'arm_cortex-a7' || matrix.arch == 'mips' && 'mipsel_24kc' }}-24.10.4
+      options: --user root
+      
     steps:
+      - name: Checkout kmod src
+        uses: actions/checkout@v4
+
+      - name: Mark repo as safe for git
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Fix SDK paths
+        run: |
+          mkdir -p /builder/shared-workdir
+          rm -rf /builder/shared-workdir/build
+          ln -sf /builder /builder/shared-workdir/build
+    
       - name: Initialization environment
         env:
           DEBIAN_FRONTEND: noninteractive
+          G_ARCH: ${{ matrix.arch }}
+          G_KVER: ${{ matrix.kver }}
         run: |
-          sudo apt-get -qq update
-          #sudo apt-get -qq update && sudo apt-get -qq upgrade
-          sudo apt-get -qq install $(cat $DEPENDENCIES | tr '\n' ' ')
-          sudo apt-get -qq autoremove --purge
-          sudo apt-get -qq clean
-          sudo timedatectl set-timezone "$TZ"
+          # apt-get -qq update
+          # apt-get -qq update && apt-get -qq upgrade
+          [ ! -f $DEPENDENCIES ] && exit 11
+          # apt-get -qq install $(cat $DEPENDENCIES | tr '\n' ' ')
+          # apt-get -qq autoremove --purge
+          # apt-get -qq clean
+          G_CROSS=unknown
+          [ "$G_ARCH" = "arm64" ] && G_CROSS=aarch64-openwrt-linux-musl
+          [ "$G_ARCH" = "armv7" ] && G_CROSS=arm-openwrt-linux-muslgnueabi
+          [ "$G_ARCH" = "mips"  ] && G_CROSS=mipsel-openwrt-linux-musl
+          echo "G_CROSS = $G_CROSS"
+          echo "G_ARCH=$G_ARCH" >> $GITHUB_ENV
+          echo "G_KVER=$G_KVER" >> $GITHUB_ENV
+          echo "G_CROSS=$G_CROSS" >> $GITHUB_ENV
+          echo "TZ=UTC" >> $GITHUB_ENV
       
-      - name: Checkout kmod src
-        uses: actions/checkout@main 
-      
-      - name: Download Toolchains
-        env:
-          ARCH: ${{ matrix.arch }}
-          KVER: ${{ matrix.kver }}
+      - name: Find cross-compiler binaries
         run: |
-          mkdir -p $TC_DIR
-          cd $TC_DIR
-          [ $ARCH = armv7 ] && PKG_NAME="armv7-eabihf"
-          [ $ARCH = arm64 ] && PKG_NAME="aarch64"
-          [ $ARCH = mips  ] && PKG_NAME="mips32el"
-          wget $TC_LNK/$PKG_NAME/tarballs/$PKG_NAME--musl--stable-2020.02-2.tar.bz2
-          tar -xf $PKG_NAME*.tar.bz2
-          TC_DIR=$TC_DIR/$PKG_NAME--musl--stable-2020.02-2
-          TC_PREFIX=$( find $TC_DIR -maxdepth 1 -type d -name '*-buildroot-*' | xargs -- basename )
-          GCC_PATH=$TC_DIR/bin          
-          CROSS_COMPILE=$TC_DIR/bin/$TC_PREFIX-
+          echo "Searching for cross-compiler binaries matching '*-openwrt-linux-musl*gcc*'..."
+          find /builder/staging_dir -type f -name "*-openwrt-linux-musl*gcc*" 2>/dev/null | tee found_gcc.txt
+          GCC_COUNT=$( wc -l < found_gcc.txt )
+          if [ "$GCC_COUNT" -eq 0 ]; then
+              echo "Error: No cross-compiler binaries found!"
+              exit 1
+          fi
+          echo "Found $GCC_COUNT cross-compiler binaries."
+    
+      - name: Find GCC toolchain
+        id: find-toolchain
+        run: |
+          echo "Searching for cross-compiler for architecture: $G_CROSS"
+          TOOLCHAIN_BIN=$(find /builder/staging_dir -type f -name "$G_CROSS-gcc*" -exec dirname {} \; | sort -u | head -n 1)
+          if [ -z "$TOOLCHAIN_BIN" ]; then
+              echo "Error: cross-compiler not found!"
+              exit 1
+          fi
+          echo "Found cross-compiler in: $TOOLCHAIN_BIN"
+          echo "TOOLCHAIN_BIN=$TOOLCHAIN_BIN" >> $GITHUB_ENV
+          echo "======== Contents of the toolchain bin directory: ========"
+          ls -l "$TOOLCHAIN_BIN"
+
+      - name: Setup cross-compiler PATH and others
+        run: |
+          echo "Adding toolchain to PATH: $TOOLCHAIN_BIN"
+          echo "PATH=$TOOLCHAIN_BIN:$PATH" >> $GITHUB_ENV
+          echo "PATH=/builder/staging_dir/host/bin:$PATH" >> $GITHUB_ENV
+          TC_DIR=$( dirname "$TOOLCHAIN_BIN" )
           echo "TC_DIR=$TC_DIR" >> $GITHUB_ENV
-          echo "GCC_PATH=$GCC_PATH" >> $GITHUB_ENV
-          echo "CROSS_COMPILE=$CROSS_COMPILE" >> $GITHUB_ENV
-      
+          echo "GCC_PATH=$TOOLCHAIN_BIN" >> $GITHUB_ENV
+          echo "CROSS_COMPILE=$TOOLCHAIN_BIN/$G_CROSS-" >> $GITHUB_ENV
+          echo "TARGET_HOST=$G_CROSS" >> $GITHUB_ENV
+          echo "CROSS_TOOL=$G_CROSS-" >> $GITHUB_ENV
+
       - name: Download Linux Kernel sources
-        env:
-          KVER: ${{ matrix.kver }}
-        run: git clone https://github.com/torvalds/linux.git --depth 1 -b v$KVER linux
-      
+        run: |
+          git clone https://github.com/torvalds/linux.git --depth 1 -b v$G_KVER $LNX
+
       - name: Patch Linux Kernel sources
         id: patch
         env:
@@ -206,8 +251,8 @@ jobs:
           PREEMPT: ${{ matrix.preempt }}
         run: |
           echo "############ prepare config ############"
-          cd $BUILD_ROOT
-          export PATH=${GCC_PATH}:${PATH}
+          cd $LNX
+          # export PATH=${GCC_PATH}:${PATH}
           make ARCH=$ARCH_TAG CROSS_COMPILE=$CROSS_COMPILE xq_defconfig
           sed -i 's/^CONFIG_LOCALVERSION=".*/CONFIG_LOCALVERSION="-XMiR-Patcher"/g' .config
           sed -i 's/^# CONFIG_LOCALVERSION.*/CONFIG_LOCALVERSION="-XMiR-Patcher"/g' .config
@@ -225,7 +270,7 @@ jobs:
           make ARCH=$ARCH_TAG CROSS_COMPILE=$CROSS_COMPILE scripts prepare
           echo "############ build kmod ################"
           make ARCH=$ARCH_TAG CROSS_COMPILE=$CROSS_COMPILE modules M=./drivers/xmirp
-          OUT_DIR=$BUILD_ROOT/drivers/xmirp
+          OUT_DIR=$LNX/drivers/xmirp
           if [ ! -e "$OUT_DIR/xmir_patcher.ko" ]; then
               echo "ERROR: File xmir_patcher.ko not found!"
               exit 1
