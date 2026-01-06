@@ -130,15 +130,15 @@ jobs:
       - name: Initialization environment
         env:
           DEBIAN_FRONTEND: noninteractive
-          ARCH: ${{ matrix.arch }}
+          ARCH_TAG: ${{ matrix.arch }}
           KVER: ${{ matrix.kver }}
         run: |
           G_CROSS=unknown
-          [ "$ARCH" = "arm64" ] && G_CROSS=aarch64-openwrt-linux-musl
-          [ "$ARCH" = "armv7" ] && G_CROSS=arm-openwrt-linux-muslgnueabi
-          [ "$ARCH" = "mips"  ] && G_CROSS=mipsel-openwrt-linux-musl
+          [ "$ARCH_TAG" = "arm64" ] && G_CROSS=aarch64-openwrt-linux-musl
+          [ "$ARCH_TAG" = "armv7" ] && G_CROSS=arm-openwrt-linux-muslgnueabi
+          [ "$ARCH_TAG" = "mips"  ] && G_CROSS=mipsel-openwrt-linux-musl
           echo "G_CROSS = $G_CROSS"
-          echo "ARCH=$ARCH" >> $GITHUB_ENV
+          echo "ARCH_TAG=$ARCH_TAG" >> $GITHUB_ENV
           echo "KVER=$KVER" >> $GITHUB_ENV
           echo "G_CROSS=$G_CROSS" >> $GITHUB_ENV
           echo "TZ=UTC" >> $GITHUB_ENV
@@ -158,25 +158,25 @@ jobs:
         id: find-toolchain
         run: |
           echo "Searching for cross-compiler for architecture: $G_CROSS"
-          TOOLCHAIN_BIN=$( find /builder/staging_dir -type f -name "$G_CROSS-gcc*" -exec dirname {} \; | sort -u | head -n 1 )
-          if [ -z "$TOOLCHAIN_BIN" ]; then
+          TC_BIN=$( find /builder/staging_dir -type f -name "$G_CROSS-gcc*" -exec dirname {} \; | sort -u | head -n 1 )
+          if [ -z "$TC_BIN" ]; then
               echo "Error: cross-compiler not found!"
               exit 1
           fi
-          echo "Found cross-compiler in: $TOOLCHAIN_BIN"
-          echo "TOOLCHAIN_BIN=$TOOLCHAIN_BIN" >> $GITHUB_ENV
+          echo "Found cross-compiler in: $TC_BIN"
+          echo "TC_BIN=$TC_BIN" >> $GITHUB_ENV
           echo "======== Contents of the toolchain bin directory: ========"
-          ls -l "$TOOLCHAIN_BIN"
+          ls -l "$TC_BIN"
 
       - name: Setup cross-compiler PATH and others
         run: |
-          echo "Adding toolchain to PATH: $TOOLCHAIN_BIN"
-          echo "PATH=$TOOLCHAIN_BIN:$PATH" >> $GITHUB_ENV
+          echo "Adding toolchain to PATH: $TC_BIN"
+          echo "PATH=$TC_BIN:$PATH" >> $GITHUB_ENV
           echo "PATH=/builder/staging_dir/host/bin:$PATH" >> $GITHUB_ENV
-          TC_DIR=$( dirname "$TOOLCHAIN_BIN" )
+          TC_DIR=$( dirname "$TC_BIN" )
           echo "TC_DIR=$TC_DIR" >> $GITHUB_ENV
-          echo "GCC_PATH=$TOOLCHAIN_BIN" >> $GITHUB_ENV
-          echo "CROSS_COMPILE=$TOOLCHAIN_BIN/$G_CROSS-" >> $GITHUB_ENV
+          echo "GCC_PATH=$TC_BIN" >> $GITHUB_ENV
+          echo "CROSS_COMPILE=$TC_BIN/$G_CROSS-" >> $GITHUB_ENV
           echo "TARGET_HOST=$G_CROSS" >> $GITHUB_ENV
           echo "CROSS_TOOL=$G_CROSS-" >> $GITHUB_ENV
 
@@ -213,11 +213,11 @@ jobs:
         env:
           PREEMPT: ${{ matrix.preempt }}
         run: |
-          echo "ARCH = $ARCH    KVER = $KVER"
-          [ $ARCH = armv7 ] && ARCH_TAG="arm"
-          [ $ARCH = arm64 ] && ARCH_TAG="arm64"
-          [ $ARCH = mips  ] && ARCH_TAG="mips"
-          KCFG=$WORK_DIR/kernel-$KVER-$ARCH.config
+          echo "ARCH_TAG = $ARCH_TAG    KVER = $KVER"
+          [ $ARCH_TAG = armv7 ] && ARCH="arm"
+          [ $ARCH_TAG = arm64 ] && ARCH="arm64"
+          [ $ARCH_TAG = mips  ] && ARCH="mips"
+          KCFG=$WORK_DIR/kernel-$KVER-$ARCH_TAG.config
           echo "KCFG = $KCFG"
           echo "" >> $KCFG
           echo "CONFIG_XMIR_PATCHER=m" >> $KCFG
@@ -241,7 +241,7 @@ jobs:
           sed -i 's/^CONFIG_DEBUG_PREEMPT=y/# CONFIG_DEBUG_PREEMPT is not set/g' $KCFG
           # -------------------------
           echo "KCFG=$KCFG" >> $GITHUB_ENV
-          echo "ARCH_TAG=$ARCH_TAG" >> $GITHUB_ENV
+          echo "ARCH=$ARCH" >> $GITHUB_ENV
           echo "status=success" >> $GITHUB_OUTPUT
 
       - name: Prepare Kernel Configs
@@ -260,9 +260,9 @@ jobs:
           if [ $PREEMPT = p_on ]; then
               sed -i 's/\\tdefault PREEMPT_NONE/\\tdefault PREEMPT/g' ./kernel/Kconfig.preempt
           fi
-          cp "$KCFG" "./arch/$ARCH_TAG/configs/xq_defconfig"
+          cp "$KCFG" "./arch/$ARCH/configs/xq_defconfig"
           echo "############ prepare defconfig ############"
-          make ARCH=$ARCH_TAG CROSS_COMPILE=$CROSS_COMPILE xq_defconfig
+          make xq_defconfig
           echo "############ patch .config ############"
           sed -i 's/^CONFIG_LOCALVERSION=".*/CONFIG_LOCALVERSION="-XMiR-Patcher"/g' .config
           sed -i 's/^# CONFIG_LOCALVERSION.*/CONFIG_LOCALVERSION="-XMiR-Patcher"/g' .config
@@ -275,7 +275,7 @@ jobs:
           scripts/config --set-val  DEBUG_INFO_NONE       y
           scripts/config --set-val  DEBUG_INFO_DWARF5     n
           echo "############ prepare .config ############"
-          make ARCH=$ARCH_TAG CROSS_COMPILE=$CROSS_COMPILE scripts prepare
+          make scripts prepare
           echo "status=success" >> $GITHUB_OUTPUT
 
       - name: Show .config
@@ -289,7 +289,7 @@ jobs:
         if: steps.prepare.outputs.status == 'success'
         working-directory: ${{ env.KDIR }}
         run: |
-          make ARCH=$ARCH_TAG CROSS_COMPILE=$CROSS_COMPILE modules_prepare
+          make modules_prepare
           echo "status=success" >> $GITHUB_OUTPUT
 
       - name: Build xmir_patcher module
@@ -297,7 +297,7 @@ jobs:
         if: steps.mod_prepare.outputs.status == 'success'
         working-directory: ${{ env.KDIR }}
         run: |
-          make ARCH=$ARCH_TAG CROSS_COMPILE=$CROSS_COMPILE M=$MDIR modules
+          make M=$MDIR modules
           echo "status=success" >> $GITHUB_OUTPUT
 
       - name: Strip xmir_patcher module
@@ -316,7 +316,7 @@ jobs:
               INSTALL_DIR=$WORK_DIR/_install
               export INSTALL_MOD_PATH=$INSTALL_DIR
               export INSTALL_MOD_STRIP=1
-              make ARCH=$ARCH_TAG CROSS_COMPILE=$CROSS_COMPILE M=$MDIR modules_install
+              make M=$MDIR modules_install
               OUT_DIR="$INSTALL_DIR/lib/modules/$KRN_REL/updates"
               if [ ! -d "$OUT_DIR" ]; then
                   OUT_DIR="$INSTALL_DIR/lib/modules/$KRN_REL/extra"
