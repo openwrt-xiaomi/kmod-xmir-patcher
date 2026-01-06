@@ -33,10 +33,9 @@ env:
   REPO_LNK: openwrt-xiaomi/kmod-xmir-patcher
   REPO_BRANCH: master
   TAG_PREFIX: v
-  LNX: ${{ github.workspace }}/linux
-  DEPENDENCIES: ${{ github.workspace }}/dependencies-ubuntu.txt
-  TC_DIR: ${{ github.workspace }}/tc
-  TC_LNK: https://toolchains.bootlin.com/downloads/releases/toolchains
+  WORK_DIR: /__w/${{ github.event.repository.name }}/${{ github.event.repository.name }}
+  MDIR: /__w/${{ github.event.repository.name }}/${{ github.event.repository.name }}/src
+  KDIR: /__w/${{ github.event.repository.name }}/${{ github.event.repository.name }}/linux
   TZ: UTC
   BUILD_DATE: unknown
   REPO_DATE: unknown
@@ -122,10 +121,6 @@ jobs:
       - name: Checkout kmod src
         uses: actions/checkout@v4
 
-      - name: Mark repo as safe for git
-        run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
       - name: Fix SDK paths
         run: |
           mkdir -p /builder/shared-workdir
@@ -135,22 +130,16 @@ jobs:
       - name: Initialization environment
         env:
           DEBIAN_FRONTEND: noninteractive
-          G_ARCH: ${{ matrix.arch }}
-          G_KVER: ${{ matrix.kver }}
+          ARCH: ${{ matrix.arch }}
+          KVER: ${{ matrix.kver }}
         run: |
-          # apt-get -qq update
-          # apt-get -qq update && apt-get -qq upgrade
-          [ ! -f $DEPENDENCIES ] && exit 11
-          # apt-get -qq install $(cat $DEPENDENCIES | tr '\n' ' ')
-          # apt-get -qq autoremove --purge
-          # apt-get -qq clean
           G_CROSS=unknown
-          [ "$G_ARCH" = "arm64" ] && G_CROSS=aarch64-openwrt-linux-musl
-          [ "$G_ARCH" = "armv7" ] && G_CROSS=arm-openwrt-linux-muslgnueabi
-          [ "$G_ARCH" = "mips"  ] && G_CROSS=mipsel-openwrt-linux-musl
+          [ "$ARCH" = "arm64" ] && G_CROSS=aarch64-openwrt-linux-musl
+          [ "$ARCH" = "armv7" ] && G_CROSS=arm-openwrt-linux-muslgnueabi
+          [ "$ARCH" = "mips"  ] && G_CROSS=mipsel-openwrt-linux-musl
           echo "G_CROSS = $G_CROSS"
-          echo "G_ARCH=$G_ARCH" >> $GITHUB_ENV
-          echo "G_KVER=$G_KVER" >> $GITHUB_ENV
+          echo "ARCH=$ARCH" >> $GITHUB_ENV
+          echo "KVER=$KVER" >> $GITHUB_ENV
           echo "G_CROSS=$G_CROSS" >> $GITHUB_ENV
           echo "TZ=UTC" >> $GITHUB_ENV
       
@@ -169,7 +158,7 @@ jobs:
         id: find-toolchain
         run: |
           echo "Searching for cross-compiler for architecture: $G_CROSS"
-          TOOLCHAIN_BIN=$(find /builder/staging_dir -type f -name "$G_CROSS-gcc*" -exec dirname {} \; | sort -u | head -n 1)
+          TOOLCHAIN_BIN=$( find /builder/staging_dir -type f -name "$G_CROSS-gcc*" -exec dirname {} \; | sort -u | head -n 1 )
           if [ -z "$TOOLCHAIN_BIN" ]; then
               echo "Error: cross-compiler not found!"
               exit 1
@@ -193,44 +182,52 @@ jobs:
 
       - name: Download Linux Kernel sources
         run: |
-          git clone https://github.com/torvalds/linux.git --depth 1 -b v$G_KVER $LNX
+          git clone https://github.com/torvalds/linux.git --depth 1 -b v$KVER $KDIR
 
       - name: Patch Linux Kernel sources
         id: patch
-        env:
-          ARCH: ${{ matrix.arch }}
-          KVER: ${{ matrix.kver }}
-          PREEMPT: ${{ matrix.preempt }}
+        working-directory: ${{ env.KDIR }}
         run: |
           ls -la
-          if [ -e "./linux/scripts/dtc/dtc-lexer.l" ]; then
-              sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' ./linux/scripts/dtc/dtc-lexer.l
+          if [ -e "./scripts/dtc/dtc-lexer.l" ]; then
+              sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' ./scripts/dtc/dtc-lexer.l
           fi
-          if [ -e "./linux/scripts/dtc/dtc-lexer.lex.c_shipped" ]; then
-              sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' ./linux/scripts/dtc/dtc-lexer.lex.c_shipped
+          if [ -e "$KDIR/scripts/dtc/dtc-lexer.lex.c_shipped" ]; then
+              sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' ./scripts/dtc/dtc-lexer.lex.c_shipped
           fi
-          mkdir -p ./linux/drivers/xmirp
-          cp -rf src/* ./linux/drivers/xmirp
-          if ! grep -q '+= xmirp/' ./linux/drivers/Makefile ; then
-              echo 'obj-y += xmirp/' >> ./linux/drivers/Makefile
+          if [ "1" = "0" ]; then
+              mkdir -p ./drivers/xmirp
+              cp -rf src/* $KDIR/drivers/xmirp
+              if ! grep -q '+= xmirp/' $KDIR/drivers/Makefile ; then
+                  echo 'obj-y += xmirp/' >> $KDIR/drivers/Makefile
+              fi
+              if ! grep -q 'drivers/xmirp/Kconfig' $KDIR/drivers/Kconfig ; then
+                  sed -i '/endmenu/i source "drivers/xmirp/Kconfig"' $KDIR/drivers/Kconfig 
+              fi
           fi
-          if ! grep -q 'drivers/xmirp/Kconfig' ./linux/drivers/Kconfig ; then
-              sed -i '/endmenu/i source "drivers/xmirp/Kconfig"' ./linux/drivers/Kconfig 
-          fi
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      - name: Creating xq_defconfig
+        id: defconfig
+        if: steps.patch.outputs.status == 'success'
+        env:
+          PREEMPT: ${{ matrix.preempt }}
+        run: |
+          echo "ARCH = $ARCH    KVER = $KVER"
           [ $ARCH = armv7 ] && ARCH_TAG="arm"
           [ $ARCH = arm64 ] && ARCH_TAG="arm64"
           [ $ARCH = mips  ] && ARCH_TAG="mips"
-          KCFG=kernel-$KVER-$ARCH.config
+          KCFG=$WORK_DIR/kernel-$KVER-$ARCH.config
+          echo "KCFG = $KCFG"
           echo "" >> $KCFG
           echo "CONFIG_XMIR_PATCHER=m" >> $KCFG
-          # ----- patch preempt -----
+          # ----- patch config for preempt -----
           sed -i '/CONFIG_PREEMPT_NONE/a #preempt_marker' $KCFG
           sed -i '/CONFIG_PREEMPT_NONE/d' $KCFG
           sed -i '/CONFIG_PREEMPT/d' $KCFG
           sed -i '/CONFIG_PREEMPT_VOLUNTARY/d' $KCFG
           sed -i '/CONFIG_PREEMPT_COUNT/d' $KCFG
           if [ $PREEMPT = p_on ]; then
-              sed -i 's/\\tdefault PREEMPT_NONE/\\tdefault PREEMPT/g' ./linux/kernel/Kconfig.preempt
               sed -i '/#preempt_marker/i # CONFIG_PREEMPT_NONE is not set' $KCFG
               sed -i '/#preempt_marker/i # CONFIG_PREEMPT_VOLUNTARY is not set' $KCFG
               sed -i '/#preempt_marker/i CONFIG_PREEMPT=y' $KCFG
@@ -243,22 +240,30 @@ jobs:
           sed -i '#preempt_marker/d' $KCFG
           sed -i 's/^CONFIG_DEBUG_PREEMPT=y/# CONFIG_DEBUG_PREEMPT is not set/g' $KCFG
           # -------------------------
-          cp $KCFG ./linux/arch/$ARCH_TAG/configs/xq_defconfig
+          echo "KCFG=$KCFG" >> $GITHUB_ENV
           echo "ARCH_TAG=$ARCH_TAG" >> $GITHUB_ENV
           echo "status=success" >> $GITHUB_OUTPUT
-      
-      - name: Build the kernel module
-        id: compile
-        if: steps.patch.outputs.status == 'success'
-        env: 
-          ARCH: ${{ matrix.arch }}
-          KVER: ${{ matrix.kver }}
+
+      - name: Prepare Kernel Configs
+        id: prepare
+        if: steps.defconfig.outputs.status == 'success'
+        working-directory: ${{ env.KDIR }}
+        env:
           PREEMPT: ${{ matrix.preempt }}
+          STAGING_DIR: /builder/staging_dir
+          KBUILD_MODPOST_WARN: 1
         run: |
-          echo "############ prepare config ############"
-          cd $LNX
-          # export PATH=${GCC_PATH}:${PATH}
+          echo "KCFG = $KCFG"
+          echo "CROSS_COMPILE = $CROSS_COMPILE"
+          echo "STAGING_DIR=$STAGING_DIR" >> $GITHUB_ENV
+          echo "KBUILD_MODPOST_WARN=$KBUILD_MODPOST_WARN" >> $GITHUB_ENV
+          if [ $PREEMPT = p_on ]; then
+              sed -i 's/\\tdefault PREEMPT_NONE/\\tdefault PREEMPT/g' ./kernel/Kconfig.preempt
+          fi
+          cp "$KCFG" "./arch/$ARCH_TAG/configs/xq_defconfig"
+          echo "############ prepare defconfig ############"
           make ARCH=$ARCH_TAG CROSS_COMPILE=$CROSS_COMPILE xq_defconfig
+          echo "############ patch .config ############"
           sed -i 's/^CONFIG_LOCALVERSION=".*/CONFIG_LOCALVERSION="-XMiR-Patcher"/g' .config
           sed -i 's/^# CONFIG_LOCALVERSION.*/CONFIG_LOCALVERSION="-XMiR-Patcher"/g' .config
           scripts/config --disable CONFIG_LOCALVERSION_AUTO
@@ -269,20 +274,63 @@ jobs:
           scripts/config --undefine DEBUG_INFO_COMPRESSED
           scripts/config --set-val  DEBUG_INFO_NONE       y
           scripts/config --set-val  DEBUG_INFO_DWARF5     n
-          #echo "========================== config =========================="
-          #cat .config
-          #echo "=========================================================="
+          echo "############ prepare .config ############"
           make ARCH=$ARCH_TAG CROSS_COMPILE=$CROSS_COMPILE scripts prepare
-          echo "############ build kmod ################"
-          make ARCH=$ARCH_TAG CROSS_COMPILE=$CROSS_COMPILE modules M=./drivers/xmirp
-          OUT_DIR=$LNX/drivers/xmirp
-          if [ ! -e "$OUT_DIR/xmir_patcher.ko" ]; then
-              echo "ERROR: File xmir_patcher.ko not found!"
-              exit 1
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      - name: Show .config
+        if: always()
+        working-directory: ${{ env.KDIR }}
+        run: |
+          cat .config || echo "ERROR: Cannot found .config"
+
+      - name: Prepare Kernel Modules
+        id: mod_prepare
+        if: steps.prepare.outputs.status == 'success'
+        working-directory: ${{ env.KDIR }}
+        run: |
+          make ARCH=$ARCH_TAG CROSS_COMPILE=$CROSS_COMPILE modules_prepare
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      - name: Build xmir_patcher module
+        id: compile
+        if: steps.mod_prepare.outputs.status == 'success'
+        working-directory: ${{ env.KDIR }}
+        run: |
+          make ARCH=$ARCH_TAG CROSS_COMPILE=$CROSS_COMPILE M=$MDIR modules
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      - name: Strip xmir_patcher module
+        id: strip
+        if: steps.compile.outputs.status == 'success'
+        working-directory: ${{ env.KDIR }}
+        run: |
+          OUT_DIR=$MDIR
+          if make help | grep -q modules_strip; then
+              echo "Using modules_strip"
+              make M=$MDIR modules_strip
+          else
+              echo "Using INSTALL_MOD_STRIP"
+              KRN_REL=$( make -s kernelrelease )
+              echo "KRN_REL = $KRN_REL"
+              INSTALL_DIR=$WORK_DIR/_install
+              export INSTALL_MOD_PATH=$INSTALL_DIR
+              export INSTALL_MOD_STRIP=1
+              make ARCH=$ARCH_TAG CROSS_COMPILE=$CROSS_COMPILE M=$MDIR modules_install
+              OUT_DIR="$INSTALL_DIR/lib/modules/$KRN_REL/updates"
+              if [ ! -d "$OUT_DIR" ]; then
+                  OUT_DIR="$INSTALL_DIR/lib/modules/$KRN_REL/extra"
+              fi
           fi
           echo "OUT_DIR=$OUT_DIR" >> $GITHUB_ENV
           echo "status=success" >> $GITHUB_OUTPUT
 
+      - name: List built module
+        run: |
+          echo "Built modules:"
+          ls -la "$OUT_DIR"/*.ko || echo "No modules built"
+          echo "status=success" >> $GITHUB_OUTPUT
+          
       - name: Upload OUT directory
         uses: actions/upload-artifact@main
         if: steps.compile.outputs.status == 'success'
