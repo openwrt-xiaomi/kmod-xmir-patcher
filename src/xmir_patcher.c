@@ -16,6 +16,7 @@
 #include <linux/cdev.h>
 #include <linux/string.h>
 #include <linux/version.h>
+#include <linux/limits.h>
 
 #ifndef MODULE
 #error "Must be compiled as a module."

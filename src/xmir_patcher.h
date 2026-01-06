@@ -100,7 +100,7 @@ static size_t get_mtd_info_index_offset(void)
 
     for (mtd_idx = 20; mtd_idx >= 2; mtd_idx--) {
         mtd = get_mtd_device(NULL, mtd_idx);
-        if (PTR_ERR(mtd) == -EBUSY) {
+        if (IS_ERR(mtd) && PTR_ERR(mtd) == -EBUSY) {
             // device locked
             continue;
         }
@@ -134,7 +134,7 @@ static size_t get_mtd_info_index_offset(void)
         return 0;
     }
     g.mtd_index_offset = best_offset * 4;
-    pr_info("mtd_info: index offset = 0x%zX", g.mtd_index_offset);
+    pr_info("mtd_info: index offset = 0x%zx", g.mtd_index_offset);
     lock_mtd_table();
     for (mtd = get_mtd_next(NULL); mtd != NULL; mtd = get_mtd_next(mtd)) {
         mtd_idx = get_mtd_index(mtd);
