@@ -83,7 +83,7 @@ static size_t get_mtd_info_index_offset(void)
     struct mtd_info * mtd;
     const size_t obj_size = sizeof(struct mtd_info);
     const int offset_len = obj_size / 4;
-    int offset_score[sizeof(struct mtd_info) / 4 + 1];
+    uint16_t offset_score[sizeof(struct mtd_info) / 4 + 1];
     int offnum;
     int max_score = 0;
     int best_offset = 0;
@@ -112,7 +112,9 @@ static size_t get_mtd_info_index_offset(void)
             int * pindex = (int *)((char *)mtd + offset);
             if (*pindex == mtd_idx) {
                 offnum = offset / 4;
-                offset_score[offnum]++;
+                if (offset_score[offnum] < 0xFFFF) {
+                    offset_score[offnum]++;
+                }
             }
         }
         put_mtd_device(mtd);
